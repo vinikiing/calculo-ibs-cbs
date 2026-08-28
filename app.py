@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 
-st.set_page_config(page_title="Calculadora IBS/CBS - Completa", layout="wide")
+st.set_page_config(page_title="Calculadora IBS/CBS - Leitor Universal", layout="wide")
 
-# Estilização de alto contraste (compatível com Dark/Light Mode)
+# Estilização de Alto Contraste (compatível com Dark e Light Mode)
 st.markdown("""
     <style>
     .title-banner {
@@ -17,26 +17,22 @@ st.markdown("""
         font-size: 24px;
         margin-bottom: 20px;
     }
-    
     div[data-testid="stMetric"] {
         background-color: #FFF2CC !important;
         border-left: 6px solid #C65911 !important;
         padding: 10px !important;
         border-radius: 6px !important;
     }
-    
     div[data-testid="stMetric"] label {
         color: #333333 !important;
         font-weight: bold !important;
         font-size: 12px !important;
     }
-    
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
         color: #1F3864 !important;
         font-weight: bold !important;
-        font-size: 20px !important;
+        font-size: 19px !important;
     }
-    
     .stDataFrame {
         border: 1px solid #1F3864 !important;
         border-radius: 6px !important;
@@ -61,39 +57,45 @@ uploaded_files = st.file_uploader("Selecione os arquivos XML (NF-e, NFC-e ou NFS
 
 def parse_xml_flex(xml_file):
     try:
-        tree = ET.parse(xml_file)
-        root = tree.getroot()
+        # Lê o conteúdo bruto do arquivo XML
+        content = xml_file.read()
+        xml_file.seek(0)
         
-        # Busca genérica de valores numéricos por lista de tags (ignora namespace)
-        def get_val(tag_candidates):
-            for elem in root.iter():
-                clean_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
-                if clean_tag in tag_candidates and elem.text:
-                    try:
-                        val = float(elem.text)
-                        if val > 0:
-                            return val
-                    except ValueError:
-                        pass
+        root = ET.fromstring(content)
+        
+        # Mapeamento profundo de todas as tags e valores numéricos do arquivo
+        tag_dict = {}
+        for elem in root.iter():
+            clean_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+            if elem.text:
+                txt = elem.text.strip()
+                # Tratamento para formatos monetários brasileiros (ex: 1.500,50 -> 1500.50)
+                if ',' in txt:
+                    txt = txt.replace('.', '').replace(',', '.')
+                try:
+                    val = float(txt)
+                    if clean_tag not in tag_dict:
+                        tag_dict[clean_tag] = []
+                    tag_dict[clean_tag].append(val)
+                except ValueError:
+                    pass
+
+        # Função de busca inteligente de valores numéricos dentro do XML
+        def get_val_flex(keywords):
+            for tag, vals in tag_dict.items():
+                tag_lower = tag.lower()
+                for kw in keywords:
+                    if kw.lower() in tag_lower:
+                        valid_vals = [v for v in vals if v > 0]
+                        if valid_vals:
+                            return max(valid_vals)
             return 0.0
 
-        # Somatória de tags em itens (caso não esteja no resumo)
-        def sum_vals(tag_candidates):
-            total = 0.0
-            for elem in root.iter():
-                clean_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
-                if clean_tag in tag_candidates and elem.text:
-                    try:
-                        total += float(elem.text)
-                    except ValueError:
-                        pass
-            return total
-
-        # Busca de Estado (UF Destino)
+        # Busca da UF do Destinatário/Tomador no XML
         def get_uf_destino():
             for dest in root.iter():
                 clean_tag = dest.tag.split('}')[-1] if '}' in dest.tag else dest.tag
-                if clean_tag in ['dest', 'TomadorServico', 'Tomador', 'PrestadorServico']:
+                if clean_tag in ['dest', 'TomadorServico', 'Tomador', 'PrestadorServico', 'enderDest']:
                     for elem in dest.iter():
                         sub_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
                         if sub_tag in ['UF', 'uf'] and elem.text:
@@ -109,35 +111,16 @@ def parse_xml_flex(xml_file):
 
         uf_destino = get_uf_destino()
 
-        # 1. Valor Total da NF
-        v_nf = get_val(['vNF', 'ValorLiquidoNfse', 'vServicos', 'ValorServicos', 'vTotal', 'vProd'])
-
-        # 2. Frete
-        v_frete = get_val(['vFrete', 'ValorFrete', 'vFreteTot'])
-        if v_frete == 0.0: v_frete = sum_vals(['vFrete'])
-
-        # 3. Impostos Legados & Retenções
-        v_pis = get_val(['vPIS', 'ValorPis', 'Pis', 'vPISRet'])
-        if v_pis == 0.0: v_pis = sum_vals(['vPIS'])
-
-        v_cofins = get_val(['vCOFINS', 'ValorCofins', 'Cofins', 'vCOFINSRet'])
-        if v_cofins == 0.0: v_cofins = sum_vals(['vCOFINS'])
-
-        v_icms = get_val(['vICMS', 'vICMSDeson'])
-        if v_icms == 0.0: v_icms = sum_vals(['vICMS'])
-
-        v_iss = get_val(['vISS', 'ValorIss', 'ValorIssRetido', 'vIss', 'vISSRet'])
-        if v_iss == 0.0: v_iss = sum_vals(['vISS'])
-
-        v_ipi = get_val(['vIPI', 'ValorIpi'])
-        if v_ipi == 0.0: v_ipi = sum_vals(['vIPI'])
-
-        # NOVOS: IR e INSS
-        v_ir = get_val(['vIR', 'ValorIr', 'vIRRF', 'ValorIrrf', 'Irrf'])
-        if v_ir == 0.0: v_ir = sum_vals(['vIRRF', 'vIR'])
-
-        v_inss = get_val(['vINSS', 'ValorInss', 'vRetPrev', 'ValorCsll', 'Inss'])
-        if v_inss == 0.0: v_inss = sum_vals(['vINSS', 'vRetPrev'])
+        # Leitura dos valores de dentro do conteúdo do XML
+        v_nf = get_val_flex(['ValorServicos', 'vServicos', 'vLiq', 'vNF', 'vProd', 'vTotal', 'ValorTotal', 'ValorLiquidoNfse'])
+        v_frete = get_val_flex(['vFrete', 'ValorFrete', 'frete'])
+        v_pis = get_val_flex(['vPIS', 'ValorPis', 'Pis', 'PISRet'])
+        v_cofins = get_val_flex(['vCOFINS', 'ValorCofins', 'Cofins', 'COFINSRet'])
+        v_icms = get_val_flex(['vICMS', 'ValorIcms', 'vICMSDeson'])
+        v_iss = get_val_flex(['vISS', 'ValorIss', 'ValorIssRetido', 'ISSRet'])
+        v_ipi = get_val_flex(['vIPI', 'ValorIpi', 'Ipi'])
+        v_ir = get_val_flex(['vIRRF', 'ValorIrrf', 'vIR', 'ValorIr', 'Irrf'])
+        v_inss = get_val_flex(['vINSS', 'ValorInss', 'vRetPrev', 'Inss', 'Csll'])
 
         total_impostos = v_pis + v_cofins + v_icms + v_iss + v_ipi + v_ir + v_inss
         base_calculo = max(0.0, v_nf - total_impostos)
@@ -160,10 +143,11 @@ def parse_xml_flex(xml_file):
             "Soma Impostos (R$)": total_impostos,
             "Base IBS/CBS (R$)": base_calculo,
             "CBS (0.9%) (R$)": cbs_estimado,
-            "IBS (0.1%) (R$)": ibs_estimado
+            "IBS (0.1%) (R$)": ibs_estimado,
+            "_debug_tags": tag_dict
         }
     except Exception as e:
-        st.error(f"Erro ao processar {xml_file.name}: {e}")
+        st.error(f"Erro ao ler o conteúdo do XML {xml_file.name}: {e}")
         return None
 
 if uploaded_files:
@@ -171,10 +155,10 @@ if uploaded_files:
             
     if dados:
         df = pd.DataFrame(dados)
+        debug_info = {d["Nome do Arquivo"]: d.pop("_debug_tags") for d in dados if "_debug_tags" in d}
         
         st.sidebar.info(f"📁 **Status:** {len(dados)} nota(s) processada(s).\n- CBS: **0,9%**\n- IBS: **0,1%**")
         
-        # Resumo Geral
         st.markdown("### 🔷 Totais da Operação & Base IBS/CBS")
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Valor Total NFs", f"R$ {df['Valor Total NF (R$)'].sum():,.2f}")
@@ -185,7 +169,6 @@ if uploaded_files:
 
         st.divider()
 
-        # Resumo de Deduções
         st.markdown("### 🔶 Impostos e Retenções Deduzidas")
         m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
         m1.metric("PIS", f"R$ {df['PIS (R$)'].sum():,.2f}")
@@ -198,7 +181,6 @@ if uploaded_files:
 
         st.divider()
 
-        # Tabela Detalhada
         st.markdown("### 📋 Detalhamento Individual por Nota Fiscal")
         st.dataframe(df.style.format({
             "Valor Total NF (R$)": "R$ {:,.2f}",
@@ -218,7 +200,6 @@ if uploaded_files:
 
         st.divider()
 
-        # Consolidação por Estado
         st.markdown("### 📍 Consolidação por UF de Destino")
         df_uf = df.groupby("UF Destino").agg({
             "Valor Total NF (R$)": "sum",
@@ -251,3 +232,8 @@ if uploaded_files:
             "CBS (0.9%) (R$)": "R$ {:,.2f}",
             "IBS (0.1%) (R$)": "R$ {:,.2f}"
         }), use_container_width=True)
+
+        # Diagnóstico de Tags do Conteúdo do XML
+        with st.expander("🔍 Diagnóstico do Conteúdo do XML"):
+            st.write("Abaixo estão todos os valores numéricos capturados do CONTEÚDO do XML:")
+            st.json(debug_info)
