@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 
-st.set_page_config(page_title="Calculadora IBS/CBS - Transição & ICMS Destino", layout="wide")
+st.set_page_config(page_title="Calculadora IBS/CBS - Transição, Frete & ICMS Destino", layout="wide")
 
 st.title("📄 Processador de NF-e e NFS-e: Transição IBS & CBS")
-st.markdown("Apuração individualizada: **CBS (0,9%)** e **IBS (0,1%)** calculados separadamente sobre a base líquida.")
+st.markdown("Apuração individualizada: **Frete**, impostos legados e apuração separada de **CBS (0,9%)** e **IBS (0,1%)**.")
 
 # Mapeamento IBGE -> UF
 IBGE_UF = {
@@ -80,6 +80,10 @@ def parse_xml_flex(xml_file):
         if v_nf == 0.0:
             v_nf = find_num_total(['vProd'])
 
+        # Valor do Frete
+        v_frete = find_num_total(['vFrete', 'ValorFrete', 'vFreteTot'])
+        if v_frete == 0.0: v_frete = find_num_sum_items(['vFrete'])
+
         # Impostos Individuais
         v_pis = find_num_total(['vPIS', 'ValorPis', 'Pis'])
         if v_pis == 0.0: v_pis = find_num_sum_items(['vPIS'])
@@ -99,7 +103,7 @@ def parse_xml_flex(xml_file):
         total_impostos = v_pis + v_cofins + v_icms + v_iss + v_ipi
         base_calculo = max(0.0, v_nf - total_impostos)
         
-        # Aplicação das Alíquotas Fixas de Forma Separada
+        # Aplicação das Alíquotas Fixas
         cbs_estimado = base_calculo * ALIQ_CBS_FIXA
         ibs_estimado = base_calculo * ALIQ_IBS_FIXA
 
@@ -107,6 +111,7 @@ def parse_xml_flex(xml_file):
             "Nome do Arquivo": xml_file.name,
             "UF Destino": uf_destino,
             "Valor Total NF (R$)": v_nf,
+            "Frete (R$)": v_frete,
             "PIS (R$)": v_pis,
             "COFINS (R$)": v_cofins,
             "ICMS (R$)": v_icms,
@@ -133,8 +138,19 @@ if uploaded_files:
         
         st.sidebar.info(f"📁 **Status:** {len(dados)} nota(s) processada(s).\n- CBS: **0,9%**\n- IBS: **0,1%**")
         
-        # Cartões de Resumo dos Impostos Legados
-        st.subheader("📌 Impostos Abatidos (Soma de Todas as Notas)")
+        # Cartões do Topo (Valores Totais e Frete)
+        st.subheader("📌 Resumo Geral & Frete")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Valor Total NFs", f"R$ {df['Valor Total NF (R$)'].sum():,.2f}")
+        c2.metric("Total Frete", f"R$ {df['Frete (R$)'].sum():,.2f}")
+        c3.metric("Base Líquida IBS/CBS", f"R$ {df['Base IBS/CBS (R$)'].sum():,.2f}")
+        c4.metric("CBS Total (0,9%)", f"R$ {df['CBS (0.9%) (R$)'].sum():,.2f}")
+        c5.metric("IBS Total (0,1%)", f"R$ {df['IBS (0.1%) (R$)'].sum():,.2f}")
+
+        st.divider()
+
+        # Cartões dos Impostos Abatidos
+        st.subheader("📌 Impostos Abatidos (Legados)")
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total PIS", f"R$ {df['PIS (R$)'].sum():,.2f}")
         m2.metric("Total COFINS", f"R$ {df['COFINS (R$)'].sum():,.2f}")
@@ -144,20 +160,11 @@ if uploaded_files:
 
         st.divider()
 
-        # Cartões de Resumo do Novo IVA Dual (Separados)
-        st.subheader("📊 Apuração de CBS e IBS (Separados)")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Valor Total NFs", f"R$ {df['Valor Total NF (R$)'].sum():,.2f}")
-        c2.metric("Base Líquida IBS/CBS", f"R$ {df['Base IBS/CBS (R$)'].sum():,.2f}")
-        c3.metric("CBS Total (0,9%)", f"R$ {df['CBS (0.9%) (R$)'].sum():,.2f}")
-        c4.metric("IBS Total (0,1%)", f"R$ {df['IBS (0.1%) (R$)'].sum():,.2f}")
-
-        st.divider()
-
         # 1. Tabela Nota por Nota
         st.subheader("📋 Detalhamento Individual por Nota Fiscal")
         st.dataframe(df.style.format({
             "Valor Total NF (R$)": "R$ {:,.2f}",
+            "Frete (R$)": "R$ {:,.2f}",
             "PIS (R$)": "R$ {:,.2f}",
             "COFINS (R$)": "R$ {:,.2f}",
             "ICMS (R$)": "R$ {:,.2f}",
@@ -175,6 +182,7 @@ if uploaded_files:
         st.subheader("📍 Consolidação por UF de Destino")
         df_uf = df.groupby("UF Destino").agg({
             "Valor Total NF (R$)": "sum",
+            "Frete (R$)": "sum",
             "PIS (R$)": "sum",
             "COFINS (R$)": "sum",
             "ICMS (R$)": "sum",
@@ -188,6 +196,7 @@ if uploaded_files:
 
         st.dataframe(df_uf.style.format({
             "Valor Total NF (R$)": "R$ {:,.2f}",
+            "Frete (R$)": "R$ {:,.2f}",
             "PIS (R$)": "R$ {:,.2f}",
             "COFINS (R$)": "R$ {:,.2f}",
             "ICMS (R$)": "R$ {:,.2f}",
