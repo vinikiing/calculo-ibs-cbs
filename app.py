@@ -4,13 +4,13 @@ import xml.etree.ElementTree as ET
 
 st.set_page_config(page_title="Calculadora IBS/CBS - Visual Planilha", layout="wide")
 
-# Estilização inspirada nas cores da planilha (Azul, Laranja e Verde)
+# Estilização com alto contraste e leitura garantida em modo escuro ou claro
 st.markdown("""
     <style>
-    /* Estilo para Títulos */
+    /* Estilo para Título Principal */
     .title-banner {
         background-color: #1F3864;
-        color: white;
+        color: #FFFFFF !important;
         padding: 15px;
         border-radius: 6px;
         text-align: center;
@@ -19,17 +19,32 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Cartões de Impostos (Laranja) */
+    /* Cartões de Métricas (Fixando texto escuro para contraste perfeito) */
     div[data-testid="stMetric"] {
-        background-color: #FFF2CC;
-        border-left: 5px solid #C65911;
-        padding: 10px;
-        border-radius: 4px;
+        background-color: #FFF2CC !important;
+        border-left: 6px solid #C65911 !important;
+        padding: 12px !important;
+        border-radius: 6px !important;
     }
     
-    /* Customização do DataFrame / Tabelas */
+    /* Rótulo da Métrica (Texto Pequeno) */
+    div[data-testid="stMetric"] label {
+        color: #595959 !important;
+        font-weight: bold !important;
+        font-size: 13px !important;
+    }
+    
+    /* Valor da Métrica (Texto Grande) */
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+        color: #1F3864 !important;
+        font-weight: bold !important;
+        font-size: 22px !important;
+    }
+    
+    /* Ajuste para as tabelas e dados */
     .stDataFrame {
-        border: 1px solid #1F3864;
+        border: 1px solid #1F3864 !important;
+        border-radius: 6px !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -150,7 +165,6 @@ if uploaded_files:
         
         st.sidebar.info(f"📁 {len(dados)} nota(s) processada(s).\n- CBS: **0,9%**\n- IBS: **0,1%**")
         
-        # Seção Azul - Valores e Totais
         st.markdown("### 🔷 Valores Totais & Frete")
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Valor Total NFs", f"R$ {df['Valor Total NF (R$)'].sum():,.2f}")
@@ -161,7 +175,6 @@ if uploaded_files:
 
         st.divider()
 
-        # Seção Laranja - Impostos Atual / Deduções
         st.markdown("### 🔶 Impostos Dedução (PIS, COFINS, ICMS, ISS, IPI)")
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total PIS", f"R$ {df['PIS (R$)'].sum():,.2f}")
@@ -172,32 +185,24 @@ if uploaded_files:
 
         st.divider()
 
-        # Função de formatação de cores nas tabelas
-        def style_dataframe(dataframe):
-            return dataframe.style.format({
-                "Valor Total NF (R$)": "R$ {:,.2f}",
-                "Frete (R$)": "R$ {:,.2f}",
-                "PIS (R$)": "R$ {:,.2f}",
-                "COFINS (R$)": "R$ {:,.2f}",
-                "ICMS (R$)": "R$ {:,.2f}",
-                "ISS (R$)": "R$ {:,.2f}",
-                "IPI (R$)": "R$ {:,.2f}",
-                "Soma Impostos (R$)": "R$ {:,.2f}",
-                "Base IBS/CBS (R$)": "R$ {:,.2f}",
-                "CBS (0.9%) (R$)": "R$ {:,.2f}",
-                "IBS (0.1%) (R$)": "R$ {:,.2f}"
-            }).set_properties(**{
-                'background-color': '#F2F2F2',
-                'color': '#1F3864',
-                'border-color': '#D9D9D9'
-            })
-
         st.markdown("### 📋 Detalhamento Individual por Nota Fiscal")
-        st.dataframe(style_dataframe(df), use_container_width=True)
+        st.dataframe(df.style.format({
+            "Valor Total NF (R$)": "R$ {:,.2f}",
+            "Frete (R$)": "R$ {:,.2f}",
+            "PIS (R$)": "R$ {:,.2f}",
+            "COFINS (R$)": "R$ {:,.2f}",
+            "ICMS (R$)": "R$ {:,.2f}",
+            "ISS (R$)": "R$ {:,.2f}",
+            "IPI (R$)": "R$ {:,.2f}",
+            "Soma Impostos (R$)": "R$ {:,.2f}",
+            "Base IBS/CBS (R$)": "R$ {:,.2f}",
+            "CBS (0.9%) (R$)": "R$ {:,.2f}",
+            "IBS (0.1%) (R$)": "R$ {:,.2f}"
+        }), use_container_width=True)
 
         st.divider()
 
-        st.markdown("### 🟢 Consolidação por UF de Destino")
+        st.markdown("### 📍 Consolidação por UF de Destino")
         df_uf = df.groupby("UF Destino").agg({
             "Valor Total NF (R$)": "sum",
             "Frete (R$)": "sum",
@@ -212,4 +217,16 @@ if uploaded_files:
             "IBS (0.1%) (R$)": "sum"
         }).reset_index()
 
-        st.dataframe(style_dataframe(df_uf), use_container_width=True)
+        st.dataframe(df_uf.style.format({
+            "Valor Total NF (R$)": "R$ {:,.2f}",
+            "Frete (R$)": "R$ {:,.2f}",
+            "PIS (R$)": "R$ {:,.2f}",
+            "COFINS (R$)": "R$ {:,.2f}",
+            "ICMS (R$)": "R$ {:,.2f}",
+            "ISS (R$)": "R$ {:,.2f}",
+            "IPI (R$)": "R$ {:,.2f}",
+            "Soma Impostos (R$)": "R$ {:,.2f}",
+            "Base IBS/CBS (R$)": "R$ {:,.2f}",
+            "CBS (0.9%) (R$)": "R$ {:,.2f}",
+            "IBS (0.1%) (R$)": "R$ {:,.2f}"
+        }), use_container_width=True)
