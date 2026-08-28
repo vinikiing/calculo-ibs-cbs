@@ -2,122 +2,162 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 
-st.set_page_config(page_title="Calculadora IBS/CBS via XML (NF-e e NFS-e)", layout="wide")
+st.set_page_config(page_title="Calculadora IBS/CBS - Impostos Discriminados", layout="wide")
 
-st.title("📄 Processador de NF-e, NFC-e e NFS-e: Cálculo de IBS & CBS")
-st.markdown("Faça o upload dos seus arquivos XML (Mercadorias ou Serviços) para calcular o IBS e a CBS.")
+st.title("📄 Processador de NF-e e NFS-e: Apuração Discriminada")
+st.markdown("Visualização individual de cada imposto (PIS, COFINS, ICMS, ISS, IPI) e cálculo da base líquida para IBS/CBS.")
+
+# Dicionário de Mapeamento de Código IBGE -> UF
+IBGE_UF = {
+    '11': 'RO', '12': 'AC', '13': 'AM', '14': 'RR', '15': 'PA', '16': 'AP', '17': 'TO',
+    '21': 'MA', '22': 'PI', '23': 'CE', '24': 'RN', '25': 'PB', '26': 'PE', '27': 'AL',
+    '28': 'SE', '29': 'BA', '31': 'MG', '32': 'ES', '33': 'RJ', '35': 'SP', '41': 'PR',
+    '42': 'SC', '43': 'RS', '50': 'MS', '51': 'MT', '52': 'GO', '53': 'DF'
+}
 
 # Sidebar - Configurações de Alíquotas
 st.sidebar.header("⚙️ Alíquotas Estimadas (%)")
 aliq_cbs = st.sidebar.number_input("Alíquota CBS (%)", min_value=0.0, value=8.8, step=0.1) / 100
 aliq_ibs = st.sidebar.number_input("Alíquota IBS (%)", min_value=0.0, value=17.7, step=0.1) / 100
 
-uploaded_files = st.file_uploader("Selecione um ou mais arquivos XML", type=["xml"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Selecione os arquivos XML (NF-e, NFC-e ou NFS-e)", type=["xml"], accept_multiple_files=True)
 
-def parse_xml_universal(xml_file):
+def parse_xml_flex(xml_file):
     try:
         tree = ET.parse(xml_file)
         root = tree.getroot()
         
-        # Função para buscar texto ignorando namespace
-        def find_tag_text(root_node, tag_names):
-            for elem in root_node.iter():
-                # Remove o namespace da tag
+        def find_num(tag_names):
+            for elem in root.iter():
                 clean_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
                 if clean_tag in tag_names and elem.text:
                     try:
                         return float(elem.text)
                     except ValueError:
-                        return elem.text
+                        pass
             return 0.0
 
-        # Identificação de tipo: NF-e vs NFS-e
-        root_tag = root.tag.split('}')[-1] if '}' in root.tag else root.tag
+        def find_str(tag_names):
+            for elem in root.iter():
+                clean_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                if clean_tag in tag_names and elem.text:
+                    return str(elem.text).strip()
+            return "N/A"
+
+        # 1. Identificação do Estado (UF)
+        uf = find_str(['UF', 'uf'])
+        if uf == "N/A" or len(uf) != 2:
+            c_mun = find_str(['cMun', 'cMunFG', 'CodigoMunicipio'])
+            if c_mun != "N/A" and len(c_mun) >= 2:
+                uf = IBGE_UF.get(c_mun[:2], "N/A")
+
+        # 2. Valor Total da Nota Fiscal
+        v_nf = find_num(['vNF', 'ValorLiquidoNfse', 'vServicos', 'ValorServicos', 'vTotal'])
+        if v_nf == 0.0:
+            v_nf = find_num(['vProd'])
+
+        # 3. Leitura dos Impostos Individuais
+        v_pis = find_num(['vPIS', 'ValorPis', 'Pis'])
+        v_cofins = find_num(['vCOFINS', 'ValorCofins', 'Cofins'])
+        v_icms = find_num(['vICMS'])
+        v_iss = find_num(['vISS', 'ValorIss', 'ValorIssRetido', 'vIss'])
+        v_ipi = find_num(['vIPI', 'ValorIpi'])
+
+        total_impostos = v_pis + v_cofins + v_icms + v_iss + v_ipi
         
-        v_prod = 0.0
-        v_nf = 0.0
-        v_pis = 0.0
-        v_cofins = 0.0
-        v_icms_iss = 0.0
-        tipo_doc = "NF-e / NFC-e"
-
-        # Leitura flexível para NFS-e (Padrões ABRASF, DSF, etc.)
-        if "CompNfse" in root_tag or "Nfse" in root_tag or "ConsultarNfse" in root_tag:
-            tipo_doc = "NFS-e (Serviço)"
-            v_prod = find_tag_text(root, ['vServicos', 'ValorServicos', 'ValorLiquidoNfse', 'vBc'])
-            v_nf = v_prod
-            v_pis = find_tag_text(root, ['ValorPis', 'vPIS', 'Pis'])
-            v_cofins = find_tag_text(root, ['ValorCofins', 'vCOFINS', 'Cofins'])
-            v_icms_iss = find_tag_text(root, ['ValorIss', 'vISS', 'ValorIssRetido', 'vIss'])
-        else:
-            # Leitura para NF-e / NFC-e
-            v_prod = find_tag_text(root, ['vProd'])
-            v_nf = find_tag_text(root, ['vNF'])
-            v_desc = find_tag_text(root, ['vDesc'])
-            v_frete = find_tag_text(root, ['vFrete'])
-            
-            v_pis = find_tag_text(root, ['vPIS'])
-            v_cofins = find_tag_text(root, ['vCOFINS'])
-            v_icms_iss = find_tag_text(root, ['vICMS'])
-            
-            if v_prod == 0.0:
-                v_prod = v_nf
-
-        base_calculo = v_prod if v_prod > 0 else v_nf
+        # 4. Base de Cálculo do IBS/CBS
+        base_calculo = max(0.0, v_nf - total_impostos)
+        
         cbs_estimado = base_calculo * aliq_cbs
         ibs_estimado = base_calculo * aliq_ibs
         total_iva = cbs_estimado + ibs_estimado
-        tributos_atuais = v_pis + v_cofins + v_icms_iss
 
         return {
             "Arquivo": xml_file.name,
-            "Tipo": tipo_doc,
-            "Valor Total (R$)": v_nf if v_nf > 0 else base_calculo,
-            "Base de Cálculo (R$)": base_calculo,
-            "PIS/COFINS Atual (R$)": v_pis + v_cofins,
-            "ICMS/ISS Atual (R$)": v_icms_iss,
-            "Tributos Atuais (R$)": tributos_atuais,
+            "UF": uf,
+            "Valor Total NF (R$)": v_nf,
+            "PIS (R$)": v_pis,
+            "COFINS (R$)": v_cofins,
+            "ICMS (R$)": v_icms,
+            "ISS (R$)": v_iss,
+            "IPI (R$)": v_ipi,
+            "Soma Impostos (R$)": total_impostos,
+            "Base IBS/CBS (R$)": base_calculo,
             "CBS Estimado (R$)": cbs_estimado,
             "IBS Estimado (R$)": ibs_estimado,
-            "Total IBS/CBS (R$)": total_iva
+            "Total IBS + CBS (R$)": total_iva
         }
     except Exception as e:
         st.error(f"Erro ao processar {xml_file.name}: {e}")
         return None
 
 if uploaded_files:
-    dados_processados = []
-    for file in uploaded_files:
-        res = parse_xml_universal(file)
-        if res:
-            dados_processados.append(res)
-            
-    if dados_processados:
-        df = pd.DataFrame(dados_processados)
+    dados = [res for f in uploaded_files if (res := parse_xml_flex(f))]
+    if dados:
+        df = pd.DataFrame(dados)
         
-        st.subheader("📊 Resumo dos XMLs Processados")
-        tot_base = df["Base de Cálculo (R$)"].sum()
-        tot_cbs = df["CBS Estimado (R$)"].sum()
-        tot_ibs = df["IBS Estimado (R$)"].sum()
-        tot_iva = df["Total IBS/CBS (R$)"].sum()
-        tot_atual = df["Tributos Atuais (R$)"].sum()
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Base Total Processada", f"R$ {tot_base:,.2f}")
-        c2.metric("CBS Total (Federal)", f"R$ {tot_cbs:,.2f}")
-        c3.metric("IBS Total (Est./Mun.)", f"R$ {tot_ibs:,.2f}")
-        c4.metric("Total IBS + CBS", f"R$ {tot_iva:,.2f}")
-        
+        # Cartões de Visão Geral dos Impostos
+        st.subheader("📌 Totais Individuais por Imposto")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Total PIS", f"R$ {df['PIS (R$)'].sum():,.2f}")
+        m2.metric("Total COFINS", f"R$ {df['COFINS (R$)'].sum():,.2f}")
+        m3.metric("Total ICMS", f"R$ {df['ICMS (R$)'].sum():,.2f}")
+        m4.metric("Total ISS", f"R$ {df['ISS (R$)'].sum():,.2f}")
+        m5.metric("Total IPI", f"R$ {df['IPI (R$)'].sum():,.2f}")
+
         st.divider()
-        
-        st.subheader("📋 Tabela Detalhada")
-        st.dataframe(df.style.format({
-            "Valor Total (R$)": "R$ {:,.2f}",
-            "Base de Cálculo (R$)": "R$ {:,.2f}",
-            "PIS/COFINS Atual (R$)": "R$ {:,.2f}",
-            "ICMS/ISS Atual (R$)": "R$ {:,.2f}",
-            "Tributos Atuais (R$)": "R$ {:,.2f}",
+
+        # Resumo dos IVA
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Valor Total NFs", f"R$ {df['Valor Total NF (R$)'].sum():,.2f}")
+        c2.metric("Soma de Todos Impostos", f"R$ {df['Soma Impostos (R$)'].sum():,.2f}")
+        c3.metric("Base Líquida IBS/CBS", f"R$ {df['Base IBS/CBS (R$)'].sum():,.2f}")
+        c4.metric("Total IBS + CBS Estimado", f"R$ {df['Total IBS + CBS (R$)'].sum():,.2f}")
+
+        st.divider()
+
+        # Tabela Agrupada por Estado (UF)
+        st.subheader("📍 Impostos Discriminados por Estado (UF)")
+        df_uf = df.groupby("UF").agg({
+            "Valor Total NF (R$)": "sum",
+            "PIS (R$)": "sum",
+            "COFINS (R$)": "sum",
+            "ICMS (R$)": "sum",
+            "ISS (R$)": "sum",
+            "IPI (R$)": "sum",
+            "Soma Impostos (R$)": "sum",
+            "Base IBS/CBS (R$)": "sum",
+            "CBS Estimado (R$)": "sum",
+            "IBS Estimado (R$)": "sum",
+            "Total IBS + CBS (R$)": "sum"
+        }).reset_index()
+
+        st.dataframe(df_uf.style.format({
+            "Valor Total NF (R$)": "R$ {:,.2f}",
+            "PIS (R$)": "R$ {:,.2f}",
+            "COFINS (R$)": "R$ {:,.2f}",
+            "ICMS (R$)": "R$ {:,.2f}",
+            "ISS (R$)": "R$ {:,.2f}",
+            "IPI (R$)": "R$ {:,.2f}",
+            "Soma Impostos (R$)": "R$ {:,.2f}",
+            "Base IBS/CBS (R$)": "R$ {:,.2f}",
             "CBS Estimado (R$)": "R$ {:,.2f}",
             "IBS Estimado (R$)": "R$ {:,.2f}",
-            "Total IBS/CBS (R$)": "R$ {:,.2f}"
+            "Total IBS + CBS (R$)": "R$ {:,.2f}"
+        }), use_container_width=True)
+
+        # Tabela Detalhada por Arquivo/Nota
+        st.subheader("📋 Detalhamento Nota por Nota")
+        st.dataframe(df.style.format({
+            "Valor Total NF (R$)": "R$ {:,.2f}",
+            "PIS (R$)": "R$ {:,.2f}",
+            "COFINS (R$)": "R$ {:,.2f}",
+            "ICMS (R$)": "R$ {:,.2f}",
+            "ISS (R$)": "R$ {:,.2f}",
+            "IPI (R$)": "R$ {:,.2f}",
+            "Soma Impostos (R$)": "R$ {:,.2f}",
+            "Base IBS/CBS (R$)": "R$ {:,.2f}",
+            "CBS Estimado (R$)": "R$ {:,.2f}",
+            "IBS Estimado (R$)": "R$ {:,.2f}",
+            "Total IBS + CBS (R$)": "R$ {:,.2f}"
         }), use_container_width=True)
