@@ -2,87 +2,100 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 
-st.set_page_config(page_title="Calculadora IBS/CBS via XML", layout="wide")
+st.set_page_config(page_title="Calculadora IBS/CBS via XML (NF-e e NFS-e)", layout="wide")
 
-st.title("📄 Processador de NFe/NFCe: Cálculo de IBS & CBS")
-st.markdown("Faça o upload de arquivos XML de NF-e para calcular o IBS e a CBS automaticamente.")
+st.title("📄 Processador de NF-e, NFC-e e NFS-e: Cálculo de IBS & CBS")
+st.markdown("Faça o upload dos seus arquivos XML (Mercadorias ou Serviços) para calcular o IBS e a CBS.")
 
 # Sidebar - Configurações de Alíquotas
 st.sidebar.header("⚙️ Alíquotas Estimadas (%)")
 aliq_cbs = st.sidebar.number_input("Alíquota CBS (%)", min_value=0.0, value=8.8, step=0.1) / 100
 aliq_ibs = st.sidebar.number_input("Alíquota IBS (%)", min_value=0.0, value=17.7, step=0.1) / 100
 
-# Upload do Arquivo XML
-uploaded_files = st.file_uploader("Selecione um ou mais arquivos XML de NF-e", type=["xml"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Selecione um ou mais arquivos XML", type=["xml"], accept_multiple_files=True)
 
-def parse_xml_nfe(xml_file):
+def parse_xml_universal(xml_file):
     try:
         tree = ET.parse(xml_file)
         root = tree.getroot()
         
-        # Namespace padrão da NFe
-        ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
-        
-        # Leitura da Chave
-        ch_nfe = root.find('.//nfe:infNFe', ns)
-        if ch_nfe is None:
-            ch_nfe = root.find('.//infNFe')
-        
-        chave = ch_nfe.attrib.get('Id', 'N/A').replace('NFe', '') if ch_nfe is not None else 'N/A'
-        
-        # Função auxiliar para extrair tags numéricas
-        def get_val(path):
-            node = root.find(f'.//{path}', ns)
-            if node is None:
-                node = root.find(f'.//{path}')
-            return float(node.text) if node is not None and node.text else 0.0
+        # Função para buscar texto ignorando namespace
+        def find_tag_text(root_node, tag_names):
+            for elem in root_node.iter():
+                # Remove o namespace da tag
+                clean_tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                if clean_tag in tag_names and elem.text:
+                    try:
+                        return float(elem.text)
+                    except ValueError:
+                        return elem.text
+            return 0.0
 
-        v_prod = get_val('nfe:vProd') or get_val('vProd')
-        v_nf = get_val('nfe:vNF') or get_val('vNF')
-        v_frete = get_val('nfe:vFrete') or get_val('vFrete')
-        v_desc = get_val('nfe:vDesc') or get_val('vDesc')
+        # Identificação de tipo: NF-e vs NFS-e
+        root_tag = root.tag.split('}')[-1] if '}' in root.tag else root.tag
         
-        # Valores tributários legados para comparação
-        v_pis = get_val('nfe:vPIS') or get_val('vPIS')
-        v_cofins = get_val('nfe:vCOFINS') or get_val('vCOFINS')
-        v_icms = get_val('nfe:vICMS') or get_val('vICMS')
-        
-        # Base de cálculo do IBS/CBS (Produtos - Descontos + Frete)
-        base_calculo = v_prod - v_desc + v_frete
-        if base_calculo <= 0:
-            base_calculo = v_nf
+        v_prod = 0.0
+        v_nf = 0.0
+        v_pis = 0.0
+        v_cofins = 0.0
+        v_icms_iss = 0.0
+        tipo_doc = "NF-e / NFC-e"
+
+        # Leitura flexível para NFS-e (Padrões ABRASF, DSF, etc.)
+        if "CompNfse" in root_tag or "Nfse" in root_tag or "ConsultarNfse" in root_tag:
+            tipo_doc = "NFS-e (Serviço)"
+            v_prod = find_tag_text(root, ['vServicos', 'ValorServicos', 'ValorLiquidoNfse', 'vBc'])
+            v_nf = v_prod
+            v_pis = find_tag_text(root, ['ValorPis', 'vPIS', 'Pis'])
+            v_cofins = find_tag_text(root, ['ValorCofins', 'vCOFINS', 'Cofins'])
+            v_icms_iss = find_tag_text(root, ['ValorIss', 'vISS', 'ValorIssRetido', 'vIss'])
+        else:
+            # Leitura para NF-e / NFC-e
+            v_prod = find_tag_text(root, ['vProd'])
+            v_nf = find_tag_text(root, ['vNF'])
+            v_desc = find_tag_text(root, ['vDesc'])
+            v_frete = find_tag_text(root, ['vFrete'])
             
+            v_pis = find_tag_text(root, ['vPIS'])
+            v_cofins = find_tag_text(root, ['vCOFINS'])
+            v_icms_iss = find_tag_text(root, ['vICMS'])
+            
+            if v_prod == 0.0:
+                v_prod = v_nf
+
+        base_calculo = v_prod if v_prod > 0 else v_nf
         cbs_estimado = base_calculo * aliq_cbs
         ibs_estimado = base_calculo * aliq_ibs
         total_iva = cbs_estimado + ibs_estimado
-        
+        tributos_atuais = v_pis + v_cofins + v_icms_iss
+
         return {
-            "Chave NFe": chave,
-            "Valor Nota (R$)": v_nf,
+            "Arquivo": xml_file.name,
+            "Tipo": tipo_doc,
+            "Valor Total (R$)": v_nf if v_nf > 0 else base_calculo,
             "Base de Cálculo (R$)": base_calculo,
-            "PIS Atual (R$)": v_pis,
-            "COFINS Atual (R$)": v_cofins,
-            "ICMS Atual (R$)": v_icms,
-            "Tributos Atuais (R$)": v_pis + v_cofins + v_icms,
+            "PIS/COFINS Atual (R$)": v_pis + v_cofins,
+            "ICMS/ISS Atual (R$)": v_icms_iss,
+            "Tributos Atuais (R$)": tributos_atuais,
             "CBS Estimado (R$)": cbs_estimado,
             "IBS Estimado (R$)": ibs_estimado,
             "Total IBS/CBS (R$)": total_iva
         }
     except Exception as e:
-        st.error(f"Erro ao processar o arquivo {xml_file.name}: {e}")
+        st.error(f"Erro ao processar {xml_file.name}: {e}")
         return None
 
 if uploaded_files:
     dados_processados = []
     for file in uploaded_files:
-        res = parse_xml_nfe(file)
+        res = parse_xml_universal(file)
         if res:
             dados_processados.append(res)
             
     if dados_processados:
         df = pd.DataFrame(dados_processados)
         
-        st.subheader("📊 Totais Apurados das Notas Enviadas")
+        st.subheader("📊 Resumo dos XMLs Processados")
         tot_base = df["Base de Cálculo (R$)"].sum()
         tot_cbs = df["CBS Estimado (R$)"].sum()
         tot_ibs = df["IBS Estimado (R$)"].sum()
@@ -97,24 +110,12 @@ if uploaded_files:
         
         st.divider()
         
-        # Comparativo com o modelo antigo
-        diff = tot_iva - tot_atual
-        st.subheader("⚖️ Comparativo: Modelo Atual vs. Novo IVA Dual")
-        col_comp1, col_comp2 = st.columns(2)
-        col_comp1.metric("Impostos Atuais (PIS+COFINS+ICMS)", f"R$ {tot_atual:,.2f}")
-        col_comp2.metric(
-            "Variação Estimada de Carga", 
-            f"R$ {diff:,.2f}", 
-            delta=f"{(diff/tot_base*100):.2f}%" if tot_base > 0 else "0%"
-        )
-        
-        st.subheader("📋 Detalhamento Nota a Nota")
+        st.subheader("📋 Tabela Detalhada")
         st.dataframe(df.style.format({
-            "Valor Nota (R$)": "R$ {:,.2f}",
+            "Valor Total (R$)": "R$ {:,.2f}",
             "Base de Cálculo (R$)": "R$ {:,.2f}",
-            "PIS Atual (R$)": "R$ {:,.2f}",
-            "COFINS Atual (R$)": "R$ {:,.2f}",
-            "ICMS Atual (R$)": "R$ {:,.2f}",
+            "PIS/COFINS Atual (R$)": "R$ {:,.2f}",
+            "ICMS/ISS Atual (R$)": "R$ {:,.2f}",
             "Tributos Atuais (R$)": "R$ {:,.2f}",
             "CBS Estimado (R$)": "R$ {:,.2f}",
             "IBS Estimado (R$)": "R$ {:,.2f}",
