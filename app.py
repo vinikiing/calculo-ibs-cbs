@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 st.set_page_config(page_title="Calculadora IBS/CBS - Transição & ICMS Destino", layout="wide")
 
 st.title("📄 Processador de NF-e e NFS-e: Transição IBS & CBS")
-st.markdown("Alíquotas fixas da transição: **CBS (0,9%)** e **IBS (0,1%)** | Apuração com base na **UF de Destino** da nota.")
+st.markdown("Apuração individualizada: **CBS (0,9%)** e **IBS (0,1%)** calculados separadamente sobre a base líquida.")
 
 # Mapeamento IBGE -> UF
 IBGE_UF = {
@@ -99,10 +99,9 @@ def parse_xml_flex(xml_file):
         total_impostos = v_pis + v_cofins + v_icms + v_iss + v_ipi
         base_calculo = max(0.0, v_nf - total_impostos)
         
-        # Aplicação das Alíquotas Fixas
+        # Aplicação das Alíquotas Fixas de Forma Separada
         cbs_estimado = base_calculo * ALIQ_CBS_FIXA
         ibs_estimado = base_calculo * ALIQ_IBS_FIXA
-        total_iva = cbs_estimado + ibs_estimado
 
         return {
             "Nome do Arquivo": xml_file.name,
@@ -116,8 +115,7 @@ def parse_xml_flex(xml_file):
             "Soma Impostos (R$)": total_impostos,
             "Base IBS/CBS (R$)": base_calculo,
             "CBS (0.9%) (R$)": cbs_estimado,
-            "IBS (0.1%) (R$)": ibs_estimado,
-            "Total IBS + CBS (R$)": total_iva
+            "IBS (0.1%) (R$)": ibs_estimado
         }
     except Exception as e:
         st.error(f"Erro ao processar {xml_file.name}: {e}")
@@ -135,8 +133,8 @@ if uploaded_files:
         
         st.sidebar.info(f"📁 **Status:** {len(dados)} nota(s) processada(s).\n- CBS: **0,9%**\n- IBS: **0,1%**")
         
-        # Cartões de Resumo
-        st.subheader("📌 Totais de Impostos Abatidos (Soma de Todas as Notas)")
+        # Cartões de Resumo dos Impostos Legados
+        st.subheader("📌 Impostos Abatidos (Soma de Todas as Notas)")
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total PIS", f"R$ {df['PIS (R$)'].sum():,.2f}")
         m2.metric("Total COFINS", f"R$ {df['COFINS (R$)'].sum():,.2f}")
@@ -146,16 +144,18 @@ if uploaded_files:
 
         st.divider()
 
+        # Cartões de Resumo do Novo IVA Dual (Separados)
+        st.subheader("📊 Apuração de CBS e IBS (Separados)")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Valor Total NFs", f"R$ {df['Valor Total NF (R$)'].sum():,.2f}")
-        c2.metric("Soma Impostos Deduzidos", f"R$ {df['Soma Impostos (R$)'].sum():,.2f}")
-        c3.metric("Base Líquida IBS/CBS", f"R$ {df['Base IBS/CBS (R$)'].sum():,.2f}")
-        c4.metric("Total IBS + CBS", f"R$ {df['Total IBS + CBS (R$)'].sum():,.2f}")
+        c2.metric("Base Líquida IBS/CBS", f"R$ {df['Base IBS/CBS (R$)'].sum():,.2f}")
+        c3.metric("CBS Total (0,9%)", f"R$ {df['CBS (0.9%) (R$)'].sum():,.2f}")
+        c4.metric("IBS Total (0,1%)", f"R$ {df['IBS (0.1%) (R$)'].sum():,.2f}")
 
         st.divider()
 
-        # 1. Tabela Nota por Nota (Exibe cada XML em uma linha individual)
-        st.subheader("📋 Detalhamento Individual por Nota Fiscal (Linha por Linha)")
+        # 1. Tabela Nota por Nota
+        st.subheader("📋 Detalhamento Individual por Nota Fiscal")
         st.dataframe(df.style.format({
             "Valor Total NF (R$)": "R$ {:,.2f}",
             "PIS (R$)": "R$ {:,.2f}",
@@ -166,8 +166,7 @@ if uploaded_files:
             "Soma Impostos (R$)": "R$ {:,.2f}",
             "Base IBS/CBS (R$)": "R$ {:,.2f}",
             "CBS (0.9%) (R$)": "R$ {:,.2f}",
-            "IBS (0.1%) (R$)": "R$ {:,.2f}",
-            "Total IBS + CBS (R$)": "R$ {:,.2f}"
+            "IBS (0.1%) (R$)": "R$ {:,.2f}"
         }), use_container_width=True)
 
         st.divider()
@@ -184,8 +183,7 @@ if uploaded_files:
             "Soma Impostos (R$)": "sum",
             "Base IBS/CBS (R$)": "sum",
             "CBS (0.9%) (R$)": "sum",
-            "IBS (0.1%) (R$)": "sum",
-            "Total IBS + CBS (R$)": "sum"
+            "IBS (0.1%) (R$)": "sum"
         }).reset_index()
 
         st.dataframe(df_uf.style.format({
@@ -198,6 +196,5 @@ if uploaded_files:
             "Soma Impostos (R$)": "R$ {:,.2f}",
             "Base IBS/CBS (R$)": "R$ {:,.2f}",
             "CBS (0.9%) (R$)": "R$ {:,.2f}",
-            "IBS (0.1%) (R$)": "R$ {:,.2f}",
-            "Total IBS + CBS (R$)": "R$ {:,.2f}"
+            "IBS (0.1%) (R$)": "R$ {:,.2f}"
         }), use_container_width=True)
